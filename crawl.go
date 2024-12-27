@@ -35,6 +35,7 @@ type ResponseLog struct {
 
 var logFile *os.File
 var logEncoder *json.Encoder
+var logEntries []LogData
 
 func main() {
 	domain := flag.String("url", "", "target URL to crawl (e.g., 'http://example.com')")
@@ -59,9 +60,9 @@ func initLogFile() {
 	logEncoder.SetIndent("", "  ")
 }
 
-func writeLogEntry(logData LogData) {
-	if err := logEncoder.Encode(logData); err != nil {
-		log.Printf("Error writing log to file: %v", err)
+func writeLogs() {
+	if err := logEncoder.Encode(logEntries); err != nil {
+		log.Printf("Error writing logs to file: %v", err)
 	} else {
 		fmt.Println("Log data written to file.")
 	}
@@ -72,7 +73,7 @@ func closeLogFile() {
 		if err := logFile.Close(); err != nil {
 			log.Printf("Error closing log file: %v\n", err)
 		}
-		fmt.Println("Logs have been written to crawl_logs.json")
+		fmt.Println("Logs have been written to logs.json")
 	}
 }
 
@@ -178,7 +179,8 @@ func Crawl(domain string, depth int, timeout int) {
 				},
 				Content: string(responseBody),
 			}
-			writeLogEntry(logData)
+
+			logEntries = append(logEntries, logData)
 		}
 		responseMap = make(map[string]playwright.Response)
 
@@ -221,6 +223,8 @@ func Crawl(domain string, depth int, timeout int) {
 		}
 	}
 	crawl(domain, 0)
+
+	writeLogs()
 }
 
 func removeFragment(urlStr string) string {
