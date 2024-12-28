@@ -45,51 +45,56 @@ func main() {
 
 	if *domain == "" {
 		flag.Usage()
+		return
 	}
 
 	Crawl(*domain, *depth, *timeout)
 }
 
+// function to init log file
 func initLogFile() {
 	file, err := os.OpenFile("logs.json", os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
+		log.Fatalf("[-] Failed to open log file: %v", err)
 	}
 	logFile = file
 	logEncoder = json.NewEncoder(logFile)
 	logEncoder.SetIndent("", "  ")
 }
 
+// function to write to the log file
 func writeLogs() {
 	if err := logEncoder.Encode(logEntries); err != nil {
-		log.Printf("Error writing logs to file: %v", err)
+		log.Printf("[-] Error writing logs to file: %v", err)
 	} else {
-		fmt.Println("Log data written to file.")
+		fmt.Println("[*] Log data written to file.")
 	}
 }
 
+// function to close the log file
 func closeLogFile() {
 	if logFile != nil {
 		if err := logFile.Close(); err != nil {
-			log.Printf("Error closing log file: %v\n", err)
+			log.Printf("[-] Error closing log file: %v\n", err)
 		}
-		fmt.Println("Logs have been written to logs.json")
+		fmt.Println("[*] Logs have been written to logs.json")
 	}
 }
 
+// function to crawl URL(s) on a given target URL
 func Crawl(domain string, depth int, timeout int) {
 	visited := make(map[string]bool)
 
 	baseURL, err := url.Parse(domain)
 	if err != nil {
-		log.Fatalf("Invalid domain: %v", err)
+		log.Fatalf("[-] Invalid domain: %v", err)
 	}
 
 	baseDomain := baseURL.Host
 
 	pw, err := playwright.Run()
 	if err != nil {
-		log.Fatalf("Failed to start Playwright: %v", err)
+		log.Fatalf("[-] Failed to start Playwright: %v", err)
 	}
 	defer pw.Stop()
 
@@ -97,19 +102,19 @@ func Crawl(domain string, depth int, timeout int) {
 		Headless: playwright.Bool(true),
 	})
 	if err != nil {
-		log.Fatalf("Failed to launch Firefox: %v", err)
+		log.Fatalf("[-] Failed to launch Firefox: %v", err)
 	}
 	defer browser.Close()
 
 	context, err := browser.NewContext()
 	if err != nil {
-		log.Fatalf("Failed to create browser context: %v", err)
+		log.Fatalf("[-] Failed to create browser context: %v", err)
 	}
 	defer context.Close()
 
 	page, err := context.NewPage()
 	if err != nil {
-		log.Fatalf("Failed to create a new page: %v", err)
+		log.Fatalf("[-] Failed to create a new page: %v", err)
 	}
 	defer page.Close()
 
@@ -118,12 +123,18 @@ func Crawl(domain string, depth int, timeout int) {
 
 	responseMap := make(map[string]playwright.Response)
 	page.On("response", func(response playwright.Response) {
-		if strings.HasSuffix(response.URL(), baseDomain) || strings.Contains(response.URL(), baseDomain) {
-			if !visited[response.URL()] {
-				fmt.Printf("Captured response from: %s, Status Code: %d\n", response.URL(), response.Status())
-				visited[response.URL()] = true
-				responseMap[response.URL()] = response
-			}
+		responseURL, err := url.Parse(response.URL())
+		if err != nil {
+			return
+		}
+
+		if !isInScope(baseDomain, responseURL.Host) {
+			return
+		}
+
+		if !visited[response.URL()] {
+			visited[response.URL()] = true
+			responseMap[response.URL()] = response
 		}
 	})
 
@@ -134,7 +145,7 @@ func Crawl(domain string, depth int, timeout int) {
 		}
 		visited[currentURL] = true
 		noFragmentURL := removeFragment(currentURL)
-		fmt.Printf("Crawling: %s (Depth: %d)\n", noFragmentURL, currentDepth)
+		fmt.Printf("[*] Crawling: %s (Depth: %d)\n", noFragmentURL, currentDepth)
 
 		_, err = page.Goto(currentURL, playwright.PageGotoOptions{
 			Timeout:   playwright.Float(float64(timeout) * 1000),
@@ -142,7 +153,7 @@ func Crawl(domain string, depth int, timeout int) {
 		})
 
 		if err != nil {
-			fmt.Printf("Failed to navigate to %s: %v\n", currentURL, err)
+			fmt.Printf("[-] Failed to navigate to %s: %v\n", currentURL, err)
 			return
 		}
 
@@ -150,7 +161,7 @@ func Crawl(domain string, depth int, timeout int) {
 			State: playwright.LoadStateLoad,
 		})
 		if err != nil {
-			fmt.Printf("Failed to wait for load state for %s: %v\n", currentURL, err)
+			fmt.Printf("[-] Failed to wait for load state for %s: %v\n", currentURL, err)
 			return
 		}
 
@@ -162,7 +173,7 @@ func Crawl(domain string, depth int, timeout int) {
 			}
 			responseBody, err := response.Body()
 			if err != nil {
-				log.Printf("Failed to get response body for %s: %v\n", response.URL(), err)
+				log.Printf("[-] Failed to get response body for %s: %v\n", response.URL(), err)
 				continue
 			}
 
@@ -184,19 +195,20 @@ func Crawl(domain string, depth int, timeout int) {
 		}
 		responseMap = make(map[string]playwright.Response)
 
+		// need to update [EvalOnSelectorAll is deprecated]
 		links, err := page.EvalOnSelectorAll("a[href], form[action], script[src], iframe[src], img[src], link[href], meta[http-equiv=refresh][content]", `elements => {
-            return elements.map(el => {
-                if (el.tagName === 'META' && el.httpEquiv === 'refresh') {
-                    const content = el.content || '';
-                    const urlIdx = content.indexOf('url=');
-                    if (urlIdx !== -1) return content.substring(urlIdx + 4);
-                    return null;
-                }
-                return el.href || el.action || el.src || null;
-            }).filter(Boolean);
-        }`)
+			return elements.map(el => {
+				if (el.tagName === 'META' && el.httpEquiv === 'refresh') {
+					const content = el.content || '';
+					const urlIdx = content.indexOf('url=');
+					if (urlIdx !== -1) return content.substring(urlIdx + 4);
+					return null;
+				}
+				return el.href || el.action || el.src || null;
+			}).filter(Boolean);
+		}`)
 		if err != nil {
-			fmt.Printf("Failed to extract links: %v\n", err)
+			fmt.Printf("[-] Failed to extract links: %v\n", err)
 			return
 		}
 
@@ -213,7 +225,7 @@ func Crawl(domain string, depth int, timeout int) {
 			if err != nil {
 				continue
 			}
-			if !strings.HasSuffix(linkURL.Host, baseDomain) && !strings.Contains(linkURL.Host, baseDomain) {
+			if !isInScope(baseDomain, linkURL.Host) {
 				continue
 			}
 			absoluteURL = removeFragment(absoluteURL)
@@ -222,11 +234,12 @@ func Crawl(domain string, depth int, timeout int) {
 			}
 		}
 	}
-	crawl(domain, 0)
-
+	crawl(domain, 0) // recursion to keep crawling
+	// should I be writing logs as it crawls?
 	writeLogs()
 }
 
+// function to remove fragments from URL(s)
 func removeFragment(urlStr string) string {
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
@@ -236,6 +249,7 @@ func removeFragment(urlStr string) string {
 	return parsedURL.String()
 }
 
+// function to return the base URL of target [domain]
 func resolveURL(relative, base string) string {
 	baseURL, err := url.Parse(base)
 	if err != nil {
@@ -246,4 +260,9 @@ func resolveURL(relative, base string) string {
 		return ""
 	}
 	return baseURL.ResolveReference(relativeURL).String()
+}
+
+// function to stay in scope of target domain
+func isInScope(baseDomain, urlHost string) bool {
+	return strings.HasSuffix(urlHost, baseDomain)
 }
